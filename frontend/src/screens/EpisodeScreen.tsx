@@ -22,6 +22,18 @@ const parseDate = (value: string): number => {
   return 0;
 };
 
+const normalizeEpisodes = (items: Episode[], limit: number): Episode[] =>
+  items
+    .filter((episode) => Boolean(episode?.episodeUrl && episode?.title))
+    .map((episode) => ({
+      title: String(episode.title),
+      date: typeof episode.date === "string" ? episode.date : "",
+      episodeUrl: String(episode.episodeUrl),
+    }))
+    .sort((a, b) => parseDate(b.date) - parseDate(a.date))
+    .filter((episode, index, list) => list.findIndex((item) => item.episodeUrl === episode.episodeUrl) === index)
+    .slice(0, limit);
+
 const EpisodeCard = ({
   episode,
   onPress,
@@ -89,10 +101,7 @@ export const EpisodeScreen = ({ route, navigation }: Props) => {
       try {
         const cached = await getCachedEpisodes(show.name);
         if (cached?.length && active) {
-          const sortedCached = [...cached]
-            .sort((a, b) => parseDate(b.date) - parseDate(a.date))
-            .filter((episode, index, list) => list.findIndex((item) => item.episodeUrl === episode.episodeUrl) === index)
-            .slice(0, TOTAL_EPISODES_CAP);
+          const sortedCached = normalizeEpisodes(cached, TOTAL_EPISODES_CAP);
           setEpisodes(sortedCached);
           setFocusedItemId(sortedCached[0]?.episodeUrl || "");
           setVisibleCount(FIRST_BATCH_SIZE);
@@ -102,10 +111,7 @@ export const EpisodeScreen = ({ route, navigation }: Props) => {
         if (!active) {
           return;
         }
-        const normalizedFirstBatch = [...firstBatch]
-          .sort((a, b) => parseDate(b.date) - parseDate(a.date))
-          .filter((episode, index, list) => list.findIndex((item) => item.episodeUrl === episode.episodeUrl) === index)
-          .slice(0, FIRST_BATCH_SIZE);
+        const normalizedFirstBatch = normalizeEpisodes(firstBatch, FIRST_BATCH_SIZE);
         setEpisodes(normalizedFirstBatch);
         setVisibleCount(FIRST_BATCH_SIZE);
         setFocusedItemId((current) => current || normalizedFirstBatch[0]?.episodeUrl || "");
@@ -116,10 +122,7 @@ export const EpisodeScreen = ({ route, navigation }: Props) => {
             if (!active) {
               return;
             }
-            const normalizedNextBatch = [...nextBatch]
-              .sort((a, b) => parseDate(b.date) - parseDate(a.date))
-              .filter((episode, index, list) => list.findIndex((item) => item.episodeUrl === episode.episodeUrl) === index)
-              .slice(0, SECOND_BATCH_SIZE);
+            const normalizedNextBatch = normalizeEpisodes(nextBatch, SECOND_BATCH_SIZE);
             setPrefetchedEpisodes(normalizedNextBatch);
             await cacheEpisodes(show.name, [...normalizedFirstBatch, ...normalizedNextBatch]);
           })
@@ -154,11 +157,7 @@ export const EpisodeScreen = ({ route, navigation }: Props) => {
   }, [navigation, provider, show.name]);
 
   const allEpisodes = useMemo(
-    () =>
-      [...episodes, ...prefetchedEpisodes]
-        .sort((a, b) => parseDate(b.date) - parseDate(a.date))
-        .filter((episode, index, list) => list.findIndex((item) => item.episodeUrl === episode.episodeUrl) === index)
-        .slice(0, TOTAL_EPISODES_CAP),
+    () => normalizeEpisodes([...episodes, ...prefetchedEpisodes], TOTAL_EPISODES_CAP),
     [episodes, prefetchedEpisodes],
   );
 

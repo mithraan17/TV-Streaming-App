@@ -10,6 +10,17 @@ type Props = NativeStackScreenProps<RootStackParamList, "Show">;
 type TVPressableState = { pressed: boolean; focused?: boolean };
 type TVEvent = { eventType?: string };
 
+const normalizeShows = (items: Show[]): Show[] =>
+  items
+    .filter((show) => Boolean(show?.url && show?.name))
+    .map((show) => ({
+      name: String(show.name),
+      url: String(show.url),
+      imageUrl: typeof show.imageUrl === "string" ? show.imageUrl : "",
+    }))
+    .filter((show, index, list) => list.findIndex((item) => item.url === show.url) === index)
+    .slice(0, 6);
+
 type ShowCardProps = {
   show: Show;
   onPress: (show: Show) => void;
@@ -62,15 +73,16 @@ export const ShowScreen = ({ route, navigation }: Props) => {
       try {
         const cached = await getCachedShows();
         if (cached?.length && active) {
-          setShows(cached.slice(0, 6));
-          setFocusedShowUrl(cached[0]?.url || "");
+          const normalizedCached = normalizeShows(cached);
+          setShows(normalizedCached);
+          setFocusedShowUrl(normalizedCached[0]?.url || "");
           setLoading(false);
         }
         const liveShows = await fetchShows();
         if (!active) {
           return;
         }
-        const sixShows = liveShows.slice(0, 6);
+        const sixShows = normalizeShows(liveShows);
         setShows(sixShows);
         setFocusedShowUrl((current) => current || sixShows[0]?.url || "");
         setLoading(false);
