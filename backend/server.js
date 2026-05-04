@@ -80,6 +80,16 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const parseDateValue = (value) => {
   if (!value) return 0;
+  const text = String(value).trim();
+  const dayMonthYear = text.match(/\b(\d{1,2})[-/\s](\d{1,2})[-/\s](\d{2,4})\b/);
+  if (dayMonthYear) {
+    const day = Number(dayMonthYear[1]);
+    const month = Number(dayMonthYear[2]);
+    const yearRaw = Number(dayMonthYear[3]);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    const manualDate = new Date(year, month - 1, day).getTime();
+    if (!Number.isNaN(manualDate)) return manualDate;
+  }
   const parsed = new Date(value).getTime();
   if (!Number.isNaN(parsed)) return parsed;
   const cleaned = String(value)
@@ -106,6 +116,19 @@ const uniqueEpisodesByUrl = (items) => {
   });
   return Array.from(map.values());
 };
+
+const normalizeEpisode = (item) => ({
+  title: String(item?.title || "Episode").replace(/\s+/g, " ").trim(),
+  date: String(item?.date || "").replace(/\s+/g, " ").trim(),
+  episodeUrl: String(item?.episodeUrl || "").trim(),
+  dateValue: parseDateValue(item?.date || item?.title || ""),
+});
+
+const buildLatestEpisodeList = (items, hardLimit = 10) =>
+  uniqueEpisodesByUrl(items.map(normalizeEpisode).filter((item) => item.episodeUrl && isTamilDhoolUrl(item.episodeUrl)))
+    .map(({ title, date, episodeUrl, dateValue }) => ({ title, date, episodeUrl, dateValue }))
+    .sort((a, b) => b.dateValue - a.dateValue)
+    .slice(0, hardLimit);
 
 const requestHtml = async (url) => {
   let lastError = null;
@@ -281,7 +304,7 @@ const parseEpisodesFromShowPage = (html, showUrl, strictOrder = false) => {
     });
   });
 
-  let deduped = uniqueByUrl(episodes);
+  let deduped = uniqueEpisodesByUrl(episodes);
   if (!deduped.length) {
     const markdownEpisodeRegex = /\[([^\]]+)\]\((https?:\/\/([^\)\s]+))\)/gi;
     const markdownEpisodes = [];
@@ -294,7 +317,7 @@ const parseEpisodesFromShowPage = (html, showUrl, strictOrder = false) => {
       }
       match = markdownEpisodeRegex.exec(html);
     }
-    deduped.push(...uniqueByUrl(markdownEpisodes));
+    deduped.push(...uniqueEpisodesByUrl(markdownEpisodes));
   }
 
   if (!deduped.length) {
@@ -325,16 +348,14 @@ const parseEpisodesFromShowPage = (html, showUrl, strictOrder = false) => {
         const date = dateMatch ? `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}` : "";
         return { title: title || cleanedSlug || "Episode", date, episodeUrl: url, dateValue: parseDateValue(date) };
       });
-    deduped.push(...uniqueByUrl(plainEpisodes));
+    deduped.push(...uniqueEpisodesByUrl(plainEpisodes));
   }
 
   // If strictOrder, return the first 10 as they appear (top to bottom)
   if (strictOrder) {
-    return deduped.slice(0, 10).map(({ dateValue, ...rest }) => rest);
+    return buildLatestEpisodeList(deduped, 10).map(({ dateValue, ...rest }) => rest);
   }
-  // Otherwise, sort by date descending and return top 10
-  deduped.sort((a, b) => b.dateValue - a.dateValue);
-  return deduped.slice(0, 10).map(({ dateValue, ...rest }) => rest);
+  return buildLatestEpisodeList(deduped, 10).map(({ dateValue, ...rest }) => rest);
 };
 
 const parseVideoEmbedUrl = (html) => {
@@ -396,7 +417,7 @@ const extractEpisodesFromRawLinks = (html, showUrl) => {
 };
 
 const fetchShows = async () => {
-  const { serials, shows } = await parseMasterPage();
+  const { serials, shows } = await getHardcodedShows();
   const combined = [...serials, ...shows];
   const deduped = uniqueByUrl(combined);
   const mahanadhiIndex = deduped.findIndex((show) => show.name.toLowerCase() === "mahanadhi");
@@ -458,22 +479,21 @@ const fetchEpisodes = async (showUrl, limit, offset) => {
   // Only fetch the first page (no pagination)
   try {
     const html = await requestHtml(selectedShow.url);
-    // Always take episodes as they appear in the HTML (top to bottom)
     let episodes = parseEpisodesFromShowPage(html, selectedShow.url, true);
-    // Fallback: also try extracting from raw links if not enough
+
+    // Fallback: keep same-page extraction only and then sort by parsed date.
     if (episodes.length < 10) {
       const extra = extractEpisodesFromRawLinks(html, selectedShow.url);
-      // Merge, keeping order and uniqueness
-      const seen = new Set(episodes.map(e => e.episodeUrl));
+      const seen = new Set(episodes.map((e) => e.episodeUrl));
       for (const ep of extra) {
         if (!seen.has(ep.episodeUrl)) {
           episodes.push(ep);
           seen.add(ep.episodeUrl);
         }
-        if (episodes.length >= 10) break;
       }
     }
-    episodes = episodes.slice(0, 10);
+
+    episodes = buildLatestEpisodeList(episodes, 10).map(({ dateValue, ...rest }) => rest);
     if (!episodes.length) throw new Error(`No episodes were parsed for '${selectedShow.name}'`);
     return episodes.slice(offset, offset + limit);
   } catch (error) {
@@ -528,7 +548,11 @@ app.get("/video", async (req, res) => {
 // Debug endpoint to inspect what requestHtml returns for master page
 app.get("/debug/rawmaster", async (_req, res) => {
   try {
-    const html = await requestHtml(masterUrl);
+    const debugUrl = HARDCODED_SHOWS[0]?.url;
+    if (!debugUrl) {
+      throw new Error("No hardcoded show URL available");
+    }
+    const html = await requestHtml(debugUrl);
     res.type("text/plain").send(String(html).slice(0, 200000));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
