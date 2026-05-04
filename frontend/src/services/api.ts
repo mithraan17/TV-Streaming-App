@@ -1,7 +1,6 @@
 import axios, { AxiosInstance } from "axios";
 import * as Network from "expo-network";
 import { API_BASE_URL, BACKEND_PORT, DISCOVERY_TIMEOUT_MS } from "../constants";
-import { cacheBackendHost, getCachedBackendHost } from "./cache";
 import { Episode, Show } from "../types";
 
 const createClient = (baseURL: string): AxiosInstance =>
@@ -77,20 +76,9 @@ const resolveBackendBaseUrl = async (): Promise<string> => {
     return resolvedBaseUrl;
   }
 
-  const candidates: string[] = [];
-  const cachedHost = await getCachedBackendHost();
-  if (cachedHost) {
-    candidates.push(buildBaseUrl(cachedHost));
-  }
-  candidates.push(API_BASE_URL);
-
-  for (const candidate of candidates) {
-    if (await checkHealth(candidate)) {
-      resolvedBaseUrl = candidate;
-      const host = new URL(candidate).hostname;
-      await cacheBackendHost(host);
-      return candidate;
-    }
+  if (await checkHealth(API_BASE_URL)) {
+    resolvedBaseUrl = API_BASE_URL;
+    return resolvedBaseUrl;
   }
 
   const localIpAddress = await Network.getIpAddressAsync();
@@ -99,7 +87,6 @@ const resolveBackendBaseUrl = async (): Promise<string> => {
   if (discoveredHost) {
     const baseURL = buildBaseUrl(discoveredHost);
     resolvedBaseUrl = baseURL;
-    await cacheBackendHost(discoveredHost);
     return baseURL;
   }
 
@@ -125,6 +112,16 @@ export const fetchShows = async (): Promise<Show[]> => {
   return response.data.shows.slice(0, 6);
 };
 
+export const fetchAllShows = async (): Promise<{ serials: Show[]; shows: Show[] }> => {
+  const response = await withClient((client) =>
+    client.get<{ provider: string; serials: Show[]; shows: Show[] }>("/shows/all"),
+  );
+  if (!Array.isArray(response.data.serials) || !Array.isArray(response.data.shows)) {
+    throw new Error("Invalid shows/all response");
+  }
+  return { serials: response.data.serials, shows: response.data.shows };
+};
+
 export const fetchEpisodes = async (showName: string, limit: number, offset: number): Promise<Episode[]> => {
   const response = await withClient((client) =>
     client.get<EpisodesResponse>("/episodes", {
@@ -148,4 +145,9 @@ export const fetchVideoUrl = async (episodeUrl: string): Promise<string> => {
     throw new Error("Invalid video URL");
   }
   return videoUrl;
+};
+
+export const fetchShowImage = async (showUrl: string): Promise<string> => {
+  const response = await withClient((client) => client.get<{ imageUrl: string }>("/show-image", { params: { showUrl } }));
+  return response.data.imageUrl || "";
 };

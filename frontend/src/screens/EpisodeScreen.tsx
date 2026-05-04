@@ -1,18 +1,15 @@
+import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, BackHandler, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { fetchEpisodes, fetchVideoUrl } from "../services/api";
-import { cacheEpisodes, getCachedEpisodes } from "../services/cache";
 import { Episode, RootStackParamList } from "../types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Episode">;
 type TVPressableState = { pressed: boolean; focused?: boolean };
 type EpisodeTile = Episode & { kind: "episode" };
-type LoadMoreTile = { kind: "loadMore"; id: string };
-type EpisodeListItem = EpisodeTile | LoadMoreTile;
-const FIRST_BATCH_SIZE = 5;
-const SECOND_BATCH_SIZE = 10;
-const TOTAL_EPISODES_CAP = FIRST_BATCH_SIZE + SECOND_BATCH_SIZE;
+type EpisodeListItem = EpisodeTile;
+const FIRST_BATCH_SIZE = 10;
+const TOTAL_EPISODES_CAP = 10;
 
 const parseDate = (value: string): number => {
   const parsed = new Date(value).getTime();
@@ -61,29 +58,18 @@ const EpisodeCard = ({
   </Pressable>
 );
 
-const LoadMoreCard = ({
-  onPress,
-  isFocused,
-  onFocus,
-}: {
-  onPress: () => void;
-  isFocused: boolean;
-  onFocus: () => void;
-}) => (
-  <Pressable onPress={onPress} onFocus={onFocus} style={(state) => [styles.card, styles.loadMoreCard, (((state as TVPressableState).focused ?? false) || isFocused) && styles.cardFocused]}>
-    <Text style={styles.loadMoreTitle}>Load More</Text>
-    <Text style={styles.loadMoreText}>Fetch 10 more episodes</Text>
-  </Pressable>
-);
-
 export const EpisodeScreen = ({ route, navigation }: Props) => {
   const { provider, show } = route.params;
   const [episodes, setEpisodes] = useState<Episode[]>([]);
-  const [prefetchedEpisodes, setPrefetchedEpisodes] = useState<Episode[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [resolvingVideo, setResolvingVideo] = useState<boolean>(false);
-  const [visibleCount, setVisibleCount] = useState<number>(FIRST_BATCH_SIZE);
   const [focusedItemId, setFocusedItemId] = useState<string>("");
+
+  useEffect(() => {
+    setEpisodes([]);
+    setFocusedItemId("");
+    setLoading(true);
+  }, [show.name]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -99,39 +85,14 @@ export const EpisodeScreen = ({ route, navigation }: Props) => {
     let active = true;
     const load = async () => {
       try {
-        const cached = await getCachedEpisodes(show.name);
-        if (cached?.length && active) {
-          const sortedCached = normalizeEpisodes(cached, TOTAL_EPISODES_CAP);
-          setEpisodes(sortedCached);
-          setFocusedItemId(sortedCached[0]?.episodeUrl || "");
-          setVisibleCount(FIRST_BATCH_SIZE);
-          setLoading(false);
-        }
-        const firstBatch = await fetchEpisodes(show.name, FIRST_BATCH_SIZE, 0);
+        const batch = await fetchEpisodes(show.url || show.name, FIRST_BATCH_SIZE, 0);
         if (!active) {
           return;
         }
-        const normalizedFirstBatch = normalizeEpisodes(firstBatch, FIRST_BATCH_SIZE);
-        setEpisodes(normalizedFirstBatch);
-        setVisibleCount(FIRST_BATCH_SIZE);
-        setFocusedItemId((current) => current || normalizedFirstBatch[0]?.episodeUrl || "");
+        const normalizedBatch = normalizeEpisodes(batch, FIRST_BATCH_SIZE);
+        setEpisodes(normalizedBatch);
+        setFocusedItemId((current) => current || normalizedBatch[0]?.episodeUrl || "");
         setLoading(false);
-
-        fetchEpisodes(show.name, SECOND_BATCH_SIZE, FIRST_BATCH_SIZE)
-          .then(async (nextBatch) => {
-            if (!active) {
-              return;
-            }
-            const normalizedNextBatch = normalizeEpisodes(nextBatch, SECOND_BATCH_SIZE);
-            setPrefetchedEpisodes(normalizedNextBatch);
-            await cacheEpisodes(show.name, [...normalizedFirstBatch, ...normalizedNextBatch]);
-          })
-          .catch((_error) => {
-            if (!active) {
-              return;
-            }
-            setPrefetchedEpisodes([]);
-          });
       } catch (error) {
         if (!active) {
           return;
@@ -156,20 +117,9 @@ export const EpisodeScreen = ({ route, navigation }: Props) => {
     };
   }, [navigation, provider, show.name]);
 
-  const allEpisodes = useMemo(
-    () => normalizeEpisodes([...episodes, ...prefetchedEpisodes], TOTAL_EPISODES_CAP),
-    [episodes, prefetchedEpisodes],
-  );
+  const visibleEpisodes = useMemo(() => episodes, [episodes]);
 
-  const visibleEpisodes = useMemo(() => allEpisodes.slice(0, visibleCount), [allEpisodes, visibleCount]);
-
-  const listItems = useMemo(() => {
-    const items: EpisodeListItem[] = visibleEpisodes.map((episode) => ({ ...episode, kind: "episode" }));
-    if (visibleCount < allEpisodes.length) {
-      items.push({ kind: "loadMore", id: "load-more" });
-    }
-    return items;
-  }, [allEpisodes.length, visibleEpisodes, visibleCount]);
+  const listItems = useMemo(() => visibleEpisodes.map((episode) => ({ ...episode, kind: "episode" })), [visibleEpisodes]);
 
   const onEpisodePress = async (episode: Episode) => {
     try {
@@ -188,7 +138,7 @@ export const EpisodeScreen = ({ route, navigation }: Props) => {
   };
 
   return (
-    <View style={styles.container}>
+    <View key={show.url || show.name} style={styles.container}>
       <Image source={{ uri: show.imageUrl }} style={styles.bannerImage} resizeMode="cover" />
       <Text style={styles.title}>{show.name}</Text>
       <Text style={styles.subtitle}>Latest Episodes</Text>
@@ -199,31 +149,20 @@ export const EpisodeScreen = ({ route, navigation }: Props) => {
       ) : (
         <FlatList
           data={listItems}
-          keyExtractor={(item) => (item.kind === "episode" ? item.episodeUrl : item.id)}
+          keyExtractor={(item) => item.episodeUrl}
           numColumns={3}
           scrollEnabled={false}
           showsVerticalScrollIndicator={false}
           columnWrapperStyle={styles.row}
-          renderItem={({ item, index }) =>
-            item.kind === "episode" ? (
-              <EpisodeCard
-                episode={item}
-                onPress={onEpisodePress}
-                preferredFocus={index === 0}
-                isFocused={focusedItemId === item.episodeUrl}
-                onFocus={setFocusedItemId}
-              />
-            ) : (
-              <LoadMoreCard
-                onPress={() => {
-                  setVisibleCount(TOTAL_EPISODES_CAP);
-                  setFocusedItemId("load-more");
-                }}
-                isFocused={focusedItemId === "load-more"}
-                onFocus={() => setFocusedItemId("load-more")}
-              />
-            )
-          }
+          renderItem={({ item, index }) => (
+            <EpisodeCard
+              episode={item}
+              onPress={onEpisodePress}
+              preferredFocus={index === 0}
+              isFocused={focusedItemId === item.episodeUrl}
+              onFocus={setFocusedItemId}
+            />
+          )}
           contentContainerStyle={styles.listContainer}
         />
       )}
@@ -319,19 +258,5 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 18,
     fontWeight: "600",
-  },
-  loadMoreCard: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  loadMoreTitle: {
-    color: "#ffffff",
-    fontSize: 20,
-    fontWeight: "700",
-  },
-  loadMoreText: {
-    marginTop: 8,
-    color: "#afbed8",
-    fontSize: 14,
   },
 });

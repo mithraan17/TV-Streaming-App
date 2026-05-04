@@ -43,7 +43,4 @@ export const DISCOVERY_TIMEOUT_MS = 1500;
 
 export const PROVIDERS = [
   { id: "vijay", name: "Vijay TV", isMock: false },
-  { id: "sun", name: "Sun TV (Mock)", isMock: true },
-  { id: "zee", name: "Zee Tamil (Mock)", isMock: true },
-  { id: "colors", name: "Colors Tamil (Mock)", isMock: true },
 ];

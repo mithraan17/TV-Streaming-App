@@ -1,14 +1,20 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, BackHandler, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import React, { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, BackHandler, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { PROVIDERS } from "../constants";
-import { fetchShows } from "../services/api";
-import { cacheShows, getCachedShows } from "../services/cache";
+import { fetchAllShows, fetchShowImage } from "../services/api";
 import { Provider, RootStackParamList, Show } from "../types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Show">;
 type TVPressableState = { pressed: boolean; focused?: boolean };
 type TVEvent = { eventType?: string };
+
+type Category = "serials" | "shows";
+
+const VIJAY_CATEGORIES: Array<{ id: Category; label: string }> = [
+  { id: "serials", label: "Serials" },
+  { id: "shows", label: "Shows" },
+];
 
 const normalizeShows = (items: Show[]): Show[] =>
   items
@@ -18,8 +24,7 @@ const normalizeShows = (items: Show[]): Show[] =>
       url: String(show.url),
       imageUrl: typeof show.imageUrl === "string" ? show.imageUrl : "",
     }))
-    .filter((show, index, list) => list.findIndex((item) => item.url === show.url) === index)
-    .slice(0, 6);
+    .filter((show, index, list) => list.findIndex((item) => item.url === show.url) === index);
 
 type ShowCardProps = {
   show: Show;
@@ -45,10 +50,14 @@ const ShowCard = ({ show, onPress, onFocus, preferredFocus, isSidebarOpen, isFoc
       isSidebarOpen && styles.cardDim,
     ]}
   >
-    <Image source={{ uri: show.imageUrl }} style={styles.cardImage} resizeMode="cover" />
+    <Image
+      source={show.imageUrl ? { uri: show.imageUrl } : { uri: 'https://via.placeholder.com/600x400?text=No+Image' }}
+      style={styles.cardImage}
+      resizeMode="cover"
+    />
     <View style={styles.cardOverlay} />
     <View style={styles.cardCaption}>
-      <Text style={styles.cardTitle} numberOfLines={1}>
+      <Text style={styles.cardTitle} numberOfLines={2}>
         {show.name}
       </Text>
     </View>
@@ -58,39 +67,44 @@ const ShowCard = ({ show, onPress, onFocus, preferredFocus, isSidebarOpen, isFoc
 export const ShowScreen = ({ route, navigation }: Props) => {
   const { provider } = route.params;
   const [selectedProvider, setSelectedProvider] = useState<Provider>(provider);
+  const [serials, setSerials] = useState<Show[]>([]);
   const [shows, setShows] = useState<Show[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+  const [vijayExpanded, setVijayExpanded] = useState<boolean>(false);
   const [focusedShowUrl, setFocusedShowUrl] = useState<string>("");
-  const [drawerFocusTarget, setDrawerFocusTarget] = useState<number | undefined>(undefined);
-  const [firstCardFocusTarget, setFirstCardFocusTarget] = useState<number | undefined>(undefined);
+  const [selectedCategory, setSelectedCategory] = useState<Category>("serials");
   const drawerHandleRef = useRef<View | null>(null);
   const firstCardRef = useRef<View | null>(null);
+  const [drawerFocusTarget, setDrawerFocusTarget] = useState<number | undefined>(undefined);
+  const [firstCardFocusTarget, setFirstCardFocusTarget] = useState<number | undefined>(undefined);
+
+  const isVijayProvider = selectedProvider.id === "vijay";
+  const activeShows = selectedCategory === "shows" ? shows : serials;
+  const activeLabel = selectedCategory === "shows" ? "Shows" : "Serials";
 
   useEffect(() => {
     let active = true;
-    const load = async () => {
-      try {
-        const cached = await getCachedShows();
-        if (cached?.length && active) {
-          const normalizedCached = normalizeShows(cached);
-          setShows(normalizedCached);
-          setFocusedShowUrl(normalizedCached[0]?.url || "");
-          setLoading(false);
-        }
-        const liveShows = await fetchShows();
-        if (!active) {
-          return;
-        }
-        const sixShows = normalizeShows(liveShows);
-        setShows(sixShows);
-        setFocusedShowUrl((current) => current || sixShows[0]?.url || "");
+
+    const loadShows = async () => {
+      if (!isVijayProvider) {
+        setSerials([]);
+        setShows([]);
+        setFocusedShowUrl("");
         setLoading(false);
-        await cacheShows(sixShows);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const { serials: serialList, shows: showList } = await fetchAllShows();
+        if (!active) return;
+        setSerials(serialList || []);
+        setShows(showList || []);
+        setFocusedShowUrl((current) => current || serialList[0]?.url || showList[0]?.url || "");
+        setLoading(false);
       } catch (error) {
-        if (!active) {
-          return;
-        }
+        if (!active) return;
         setLoading(false);
         navigation.replace("Error", {
           message: `Failed to load shows: ${String(error)}`,
@@ -98,23 +112,25 @@ export const ShowScreen = ({ route, navigation }: Props) => {
         });
       }
     };
-    load().catch((error) => {
+
+    loadShows().catch((error) => {
       navigation.replace("Error", {
         message: `Failed to load shows: ${String(error)}`,
         retryRoute: "Provider",
       });
     });
+
     return () => {
       active = false;
     };
-  }, [navigation]);
+  }, [isVijayProvider, navigation]);
 
   useEffect(() => {
     const drawerTarget = drawerHandleRef.current ? (drawerHandleRef.current as unknown as { _nativeTag?: number })._nativeTag : undefined;
     const firstCardTarget = firstCardRef.current ? (firstCardRef.current as unknown as { _nativeTag?: number })._nativeTag : undefined;
     setDrawerFocusTarget(drawerTarget);
     setFirstCardFocusTarget(firstCardTarget);
-  }, [shows]);
+  }, [serials, shows, selectedCategory]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -151,12 +167,6 @@ export const ShowScreen = ({ route, navigation }: Props) => {
     };
   }, [sidebarOpen]);
 
-  const providerShows = useMemo(() => shows, [shows]);
-
-  const onShowPress = (show: Show) => {
-    navigation.navigate("Episode", { provider: selectedProvider, show });
-  };
-
   const onShowFocus = (url: string) => {
     setFocusedShowUrl(url);
     if (sidebarOpen) {
@@ -164,10 +174,104 @@ export const ShowScreen = ({ route, navigation }: Props) => {
     }
   };
 
-  const onProviderPress = (nextProvider: Provider) => {
-    setSelectedProvider(nextProvider);
-    setSidebarOpen(false);
+  // When a show becomes focused, attempt to fetch its image if missing
+  useEffect(() => {
+    let active = true;
+    const loadFocusedImage = async () => {
+      if (!focusedShowUrl) return;
+      const findAndUpdate = async (
+        listSetter: React.Dispatch<React.SetStateAction<Show[]>>,
+        list: Show[],
+      ): Promise<boolean> => {
+        const idx = list.findIndex((s: Show) => s.url === focusedShowUrl);
+        if (idx === -1) return false;
+        const item = list[idx];
+        if (!item) return false;
+        if (item.imageUrl) return true;
+        try {
+          const imageUrl = await fetchShowImage(item.url);
+          if (!active) return true;
+          if (imageUrl) {
+            const updated: Show[] = [...list];
+            updated[idx] = { name: String(item.name || ""), url: String(item.url || ""), imageUrl };
+            listSetter(updated);
+          }
+        } catch (_err) {
+          // ignore image fetch errors
+        }
+        return true;
+      };
+
+      // Try serials first, then shows
+      if (serials && serials.length) {
+        const done = await findAndUpdate(setSerials, serials);
+        if (done) return;
+      }
+      if (shows && shows.length) {
+        await findAndUpdate(setShows, shows);
+      }
+    };
+    loadFocusedImage();
+    return () => {
+      active = false;
+    };
+  }, [focusedShowUrl, serials, shows]);
+
+  const onProviderPress = () => {
+    setVijayExpanded((prev) => !prev);
   };
+
+  const onCategoryPress = (category: Category) => {
+    setSelectedCategory(category);
+    setFocusedShowUrl("");
+  };
+
+  const onShowPress = (show: Show) => {
+    navigation.push("Episode", { provider: selectedProvider, show });
+  };
+
+  const renderShowItem = ({ item, index }: { item: Show; index: number }) => (
+    <View style={[styles.cardWrapper, index % 2 === 0 ? styles.cardLeft : styles.cardRight]} key={item.url}>
+      <ShowCard
+        show={item}
+        onPress={onShowPress}
+        onFocus={onShowFocus}
+        preferredFocus={index === 0}
+        isSidebarOpen={sidebarOpen}
+        isFocused={focusedShowUrl === item.url}
+        nextFocusLeft={drawerFocusTarget}
+        cardRef={index === 0 ? firstCardRef : undefined}
+      />
+    </View>
+  );
+
+  const renderCategoryButton = (category: { id: Category; label: string }) => (
+    <Pressable
+      key={category.id}
+      onPress={() => onCategoryPress(category.id)}
+      onFocus={() => setSidebarOpen(true)}
+      hasTVPreferredFocus={category.id === 'serials'}
+      {...({ nextFocusRight: firstCardFocusTarget } as object)}
+      style={({ focused }: TVPressableState) => [
+        styles.categoryButton,
+        selectedCategory === category.id && styles.categoryButtonActive,
+        focused && styles.categoryButtonFocused,
+      ]}
+    >
+      {({ focused }: TVPressableState) => (
+        <>
+          <View
+            style={[
+              styles.categoryIndicator,
+              selectedCategory === category.id && styles.categoryIndicatorActive,
+              focused && styles.categoryIndicatorFocused,
+            ]}
+          />
+          <Text style={styles.categoryLabel}>{category.label}</Text>
+        </>
+      )}
+    </Pressable>
+  );
 
   return (
     <View style={styles.page}>
@@ -183,27 +287,43 @@ export const ShowScreen = ({ route, navigation }: Props) => {
       {sidebarOpen ? (
         <View style={styles.sidebar}>
           <Text style={styles.sidebarTitle}>Providers</Text>
-          <FlatList
-            data={PROVIDERS}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.sidebarList}
-            scrollEnabled={false}
-            renderItem={({ item, index }) => (
-              <Pressable
-                onPress={() => onProviderPress(item)}
-                onFocus={() => setSidebarOpen(true)}
-                hasTVPreferredFocus={sidebarOpen && index === 0}
-                {...({ nextFocusRight: firstCardFocusTarget } as object)}
-                style={(state) => [
-                  styles.providerItem,
-                  selectedProvider.id === item.id && styles.providerActive,
-                  ((state as TVPressableState).focused ?? false) && styles.providerFocused,
-                ]}
-              >
-                <Text style={styles.providerLabel}>{item.name}</Text>
-              </Pressable>
-            )}
-          />
+          <Pressable
+            onPress={onProviderPress}
+            onFocus={() => {
+              setSidebarOpen(true);
+              setVijayExpanded(true);
+            }}
+            hasTVPreferredFocus={sidebarOpen}
+            {...({ nextFocusRight: firstCardFocusTarget } as object)}
+            style={(state) => [
+              styles.providerItem,
+              ((state as TVPressableState).focused ?? false) && styles.providerFocused,
+            ]}
+          >
+            <Text style={styles.providerLabel}>Vijay TV</Text>
+            <Text style={styles.dropdownIcon}>{vijayExpanded ? "▼" : "▶"}</Text>
+          </Pressable>
+
+          {vijayExpanded ? (
+            <View style={styles.providerSection}>
+              {VIJAY_CATEGORIES.map((category, index) => (
+                <Pressable
+                  key={category.id}
+                  onPress={() => onCategoryPress(category.id)}
+                  onFocus={() => setSidebarOpen(true)}
+                  hasTVPreferredFocus={index === 0}
+                  {...({ nextFocusRight: firstCardFocusTarget } as object)}
+                  style={({ focused }: TVPressableState) => [
+                    styles.categoryButton,
+                    selectedCategory === category.id && styles.categoryButtonActive,
+                    focused && styles.categoryButtonFocused,
+                  ]}
+                >
+                  <Text style={styles.categoryLabel}>{category.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
         </View>
       ) : null}
 
@@ -212,31 +332,37 @@ export const ShowScreen = ({ route, navigation }: Props) => {
           <Text style={styles.title}>{selectedProvider.name}</Text>
           <Text style={styles.hint}>Press LEFT for providers</Text>
         </View>
+
         {loading ? (
           <View style={styles.centered}>
             <ActivityIndicator size="large" color="#ffffff" />
           </View>
+        ) : !isVijayProvider ? (
+          <View style={styles.centered}>
+            <Text style={styles.emptyTitle}>Only Vijay TV is available for live serials and shows at this time.</Text>
+            <Text style={styles.emptySubtitle}>Choose Vijay TV from the provider menu to continue.</Text>
+          </View>
         ) : (
-          <FlatList
-            data={providerShows}
-            keyExtractor={(item) => item.url}
-            numColumns={3}
-            scrollEnabled={false}
-            columnWrapperStyle={styles.row}
-            contentContainerStyle={styles.listContainer}
-            renderItem={({ item, index }) => (
-              <ShowCard
-                show={item}
-                onPress={onShowPress}
-                onFocus={onShowFocus}
-                preferredFocus={index === 0}
-                isSidebarOpen={sidebarOpen}
-                isFocused={focusedShowUrl === item.url}
-                nextFocusLeft={index % 3 === 0 ? drawerFocusTarget : undefined}
-                cardRef={index === 0 ? firstCardRef : undefined}
+          <View style={styles.contentArea}>
+            <View style={styles.categoryHeader}>
+              <Text style={styles.sectionTitle}>{activeLabel}</Text>
+            </View>
+            {activeShows.length ? (
+              <FlatList
+                data={activeShows}
+                keyExtractor={(item) => item.url}
+                numColumns={2}
+                columnWrapperStyle={styles.row}
+                contentContainerStyle={styles.listContainer}
+                renderItem={renderShowItem}
+                showsVerticalScrollIndicator={false}
               />
+            ) : (
+              <View style={styles.centered}>
+                <Text style={styles.emptyTitle}>No {activeLabel.toLowerCase()} found.</Text>
+              </View>
             )}
-          />
+          </View>
         )}
       </View>
     </View>
@@ -285,7 +411,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   sidebarList: {
-    paddingBottom: 20,
+    paddingBottom: 12,
   },
   providerItem: {
     marginHorizontal: 12,
@@ -294,6 +420,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 14,
     backgroundColor: "#162236",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   providerActive: {
     backgroundColor: "#20304b",
@@ -309,6 +438,52 @@ const styles = StyleSheet.create({
     fontSize: 24,
     color: "#f5f7fb",
   },
+  dropdownIcon: {
+    fontSize: 20,
+    color: "#f5f7fb",
+  },
+  providerSection: {
+    paddingHorizontal: 20,
+  },
+  categoryButton: {
+    marginBottom: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: "#152333",
+    position: "relative",
+  },
+  categoryButtonActive: {
+    backgroundColor: "#20304b",
+  },
+  categoryButtonFocused: {
+    shadowColor: "#77dcff",
+    shadowOpacity: 0.95,
+    shadowRadius: 18,
+    elevation: 10,
+    transform: [{ scale: 1.02 }],
+  },
+  categoryIndicator: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 6,
+    backgroundColor: "transparent",
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
+  },
+  categoryIndicatorActive: {
+    backgroundColor: "#69d4ff",
+  },
+  categoryIndicatorFocused: {
+    backgroundColor: "#9ee8ff",
+  },
+  categoryLabel: {
+    color: "#f5f7fb",
+    fontSize: 18,
+    fontWeight: "700",
+  },
   container: {
     flex: 1,
     backgroundColor: "#0b1220",
@@ -319,6 +494,19 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+  },
+  emptyTitle: {
+    color: "#ffffff",
+    fontSize: 22,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  emptySubtitle: {
+    color: "#afbed8",
+    fontSize: 16,
+    textAlign: "center",
+    paddingHorizontal: 24,
   },
   headerRow: {
     flexDirection: "row",
@@ -335,11 +523,28 @@ const styles = StyleSheet.create({
     color: "#afbed8",
     fontSize: 18,
   },
+  contentArea: {
+    flex: 1,
+  },
+  categoryHeader: {
+    marginBottom: 18,
+  },
   listContainer: {
-    gap: 20,
+    paddingBottom: 30,
   },
   row: {
-    gap: 18,
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  cardWrapper: {
+    flex: 1,
+    marginBottom: 18,
+  },
+  cardLeft: {
+    marginRight: 14,
+  },
+  cardRight: {
+    marginLeft: 14,
   },
   card: {
     flex: 1,
@@ -385,5 +590,11 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 18,
     fontWeight: "600",
+  },
+  sectionTitle: {
+    color: "#dbe8ff",
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 12,
   },
 });
