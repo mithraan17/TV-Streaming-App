@@ -456,6 +456,51 @@ const isLikelyFinalPlayableUrl = (value) => {
   }
 };
 
+const inferSourceType = (value) => {
+  const text = String(value || "").toLowerCase();
+  if (/dailymotion/.test(text)) return "dailymotion";
+  if (/vimeo/.test(text)) return "vimeo";
+  if (/jw|jwplayer|jw player|jwplatform/.test(text)) return "jw";
+  if (/youtube|youtu\.be/.test(text)) return "youtube";
+  return "unknown";
+};
+
+const sourcePriority = {
+  dailymotion: 0,
+  vimeo: 1,
+  jw: 2,
+  youtube: 3,
+  unknown: 4,
+};
+
+const parseEpisodeSourceLinks = (html, episodeUrl) => {
+  const $ = cheerio.load(html);
+  const found = [];
+
+  $("a").each((_, element) => {
+    const anchor = $(element);
+    const href = absoluteUrl(anchor.attr("href") || "");
+    if (!href || href === episodeUrl) return;
+    const label = anchor.text().replace(/\s+/g, " ").trim();
+    const title = String(anchor.attr("title") || "").trim();
+    const combined = `${label} ${title} ${href}`;
+    if (!/(source|dailymotion|vimeo|jw|jwplayer|youtube|watch|play|video)/i.test(combined)) {
+      return;
+    }
+    found.push({
+      type: inferSourceType(combined),
+      label: label || title || href,
+      url: href,
+    });
+  });
+
+  const deduped = Array.from(
+    new Map(found.map((item) => [item.url, item])).values(),
+  ).sort((a, b) => sourcePriority[a.type] - sourcePriority[b.type]);
+
+  return deduped;
+};
+
 const parseVideoEmbedUrlSafe = (html) => {
   try {
     return parseVideoEmbedUrl(html);
@@ -521,7 +566,22 @@ const collectVideoCandidateLinks = (html, basePageUrl) => {
 };
 
 const resolvePlayableVideoUrl = async (episodeUrl) => {
-  const queue = [{ url: episodeUrl, depth: 0 }];
+  const episodeHtml = await requestHtml(episodeUrl);
+  const sourceLinks = parseEpisodeSourceLinks(episodeHtml, episodeUrl);
+  const entryPoints = sourceLinks.length ? sourceLinks.map((item) => item.url) : [episodeUrl];
+
+  for (const sourceUrl of entryPoints) {
+    const resolved = await resolvePlayableFromEntry(sourceUrl);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  throw new Error("No playable video source could be resolved from episode page");
+};
+
+const resolvePlayableFromEntry = async (entryUrl) => {
+  const queue = [{ url: entryUrl, depth: 0 }];
   const visited = new Set();
   const maxDepth = 4;
 
@@ -561,7 +621,7 @@ const resolvePlayableVideoUrl = async (episodeUrl) => {
     }
   }
 
-  throw new Error("No playable video source could be resolved from episode page");
+  return "";
 };
 
 const extractEpisodesFromRawLinks = (html, showUrl) => {

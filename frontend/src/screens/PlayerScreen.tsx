@@ -8,6 +8,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Player">;
 
 export const PlayerScreen = ({ route, navigation }: Props) => {
   const { videoUrl } = route.params;
+  const [useDirectUri, setUseDirectUri] = React.useState<boolean>(false);
 
   React.useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -19,10 +20,25 @@ export const PlayerScreen = ({ route, navigation }: Props) => {
     };
   }, [navigation]);
 
+  const html = `
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <style>
+      html, body { margin: 0; padding: 0; background: #000; height: 100%; overflow: hidden; }
+      iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: none; }
+    </style>
+  </head>
+  <body>
+    <iframe src="${videoUrl}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>
+  </body>
+</html>`;
+
   return (
     <View style={styles.container}>
       <WebView
-        source={{ uri: videoUrl }}
+        source={useDirectUri ? { uri: videoUrl } : { html }}
         javaScriptEnabled
         allowsFullscreenVideo
         mediaPlaybackRequiresUserAction={false}
@@ -30,6 +46,11 @@ export const PlayerScreen = ({ route, navigation }: Props) => {
         originWhitelist={["*"]}
         scrollEnabled={false}
         setSupportMultipleWindows={false}
+        onError={() => {
+          if (!useDirectUri) {
+            setUseDirectUri(true);
+          }
+        }}
         style={styles.webView}
       />
     </View>
