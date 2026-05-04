@@ -437,6 +437,133 @@ const normalizePlayableVideoUrl = (value) => {
   return url;
 };
 
+const isLikelyFinalPlayableUrl = (value) => {
+  const url = sanitizeUrl(value);
+  if (!url) return false;
+  if (/\.m3u8(\?|$)/i.test(url)) return true;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host.includes("player.vimeo.com") ||
+      host.includes("dailymotion.com") ||
+      host.includes("youtube.com") ||
+      host.includes("youtu.be") ||
+      host.includes("jwplatform.com") ||
+      host.includes("jwplayer.com")
+    );
+  } catch {
+    return false;
+  }
+};
+
+const parseVideoEmbedUrlSafe = (html) => {
+  try {
+    return parseVideoEmbedUrl(html);
+  } catch {
+    return "";
+  }
+};
+
+const collectVideoCandidateLinks = (html, basePageUrl) => {
+  const $ = cheerio.load(html);
+  const links = new Set();
+
+  $("a").each((_, element) => {
+    const anchor = $(element);
+    const href = absoluteUrl(anchor.attr("href") || "");
+    const text = anchor.text().replace(/\s+/g, " ").trim().toLowerCase();
+    if (!href) return;
+    if (
+      /dailymotion|youtube|vimeo|teamstoday|jwplayer|jw player|embed|video/i.test(href) ||
+      /(source|watch|play|dailymotion|jw|player|video)/i.test(text)
+    ) {
+      links.add(href);
+    }
+  });
+
+  $("iframe").each((_, element) => {
+    const src = absoluteUrl($(element).attr("src") || "");
+    if (src) links.add(src);
+  });
+
+  const urlRegex = /https?:\/\/[^\s"'<>]+/gi;
+  const matches = html.match(urlRegex) || [];
+  matches.forEach((rawUrl) => {
+    const value = sanitizeUrl(rawUrl);
+    if (
+      /dailymotion|youtube|youtu\.be|vimeo|teamstoday|jwplayer|jwplatform|embed|player/i.test(value) ||
+      /\.m3u8(\?|$)/i.test(value)
+    ) {
+      links.add(value);
+    }
+  });
+
+  const fileMatchRegex = /file\s*:\s*["']([^"']+)["']/gi;
+  let fileMatch = fileMatchRegex.exec(html);
+  while (fileMatch) {
+    links.add(absoluteUrl(fileMatch[1]));
+    fileMatch = fileMatchRegex.exec(html);
+  }
+
+  const sourceMatchRegex = /sources?\s*:\s*\[\s*\{[^}]*file\s*:\s*["']([^"']+)["']/gi;
+  let sourceMatch = sourceMatchRegex.exec(html);
+  while (sourceMatch) {
+    links.add(absoluteUrl(sourceMatch[1]));
+    sourceMatch = sourceMatchRegex.exec(html);
+  }
+
+  if (basePageUrl) {
+    const base = basePageUrl.replace(/\/+$/, "");
+    links.add(base);
+  }
+
+  return Array.from(links).map((value) => normalizePlayableVideoUrl(value)).filter(Boolean);
+};
+
+const resolvePlayableVideoUrl = async (episodeUrl) => {
+  const queue = [{ url: episodeUrl, depth: 0 }];
+  const visited = new Set();
+  const maxDepth = 4;
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current) break;
+    const currentUrl = normalizePlayableVideoUrl(current.url);
+    if (!currentUrl || visited.has(currentUrl)) continue;
+    visited.add(currentUrl);
+
+    if (isLikelyFinalPlayableUrl(currentUrl)) {
+      return currentUrl;
+    }
+    if (current.depth > maxDepth) {
+      continue;
+    }
+
+    let html = "";
+    try {
+      html = await requestHtml(currentUrl);
+    } catch {
+      continue;
+    }
+
+    const direct = normalizePlayableVideoUrl(parseVideoEmbedUrlSafe(html));
+    if (direct && isLikelyFinalPlayableUrl(direct)) {
+      return direct;
+    }
+
+    const nextCandidates = collectVideoCandidateLinks(html, currentUrl);
+    for (const candidate of nextCandidates) {
+      if (!candidate || visited.has(candidate)) continue;
+      if (isLikelyFinalPlayableUrl(candidate)) {
+        return candidate;
+      }
+      queue.push({ url: candidate, depth: current.depth + 1 });
+    }
+  }
+
+  throw new Error("No playable video source could be resolved from episode page");
+};
+
 const extractEpisodesFromRawLinks = (html, showUrl) => {
   const showPath = new URL(showUrl).pathname.replace(/\/+$/, "");
   const linkRegex = new RegExp(`https?:\\/\\/(?:www\\.)?tamildhool\\.tech${showPath}\\/[^\\"'\\s)]+`, "gi");
@@ -579,31 +706,7 @@ app.get("/video", async (req, res) => {
   try {
     const episodeUrl = String(req.query.episodeUrl || "");
     if (!episodeUrl) throw new Error("Query parameter 'episodeUrl' is required");
-    const html = await requestHtml(episodeUrl);
-    let videoUrl = normalizePlayableVideoUrl(parseVideoEmbedUrl(html));
-
-    // Some episode pages point to an intermediate tamildhool iframe page.
-    // Resolve nested embeds so the client receives the final playable provider URL.
-    for (let depth = 0; depth < 2; depth += 1) {
-      const host = (() => {
-        try {
-          return new URL(videoUrl).hostname;
-        } catch {
-          return "";
-        }
-      })();
-      if (!host.includes("tamildhool.tech")) {
-        break;
-      }
-      const nestedHtml = await requestHtml(videoUrl);
-      const nestedVideoUrl = normalizePlayableVideoUrl(parseVideoEmbedUrl(nestedHtml));
-      if (!nestedVideoUrl || nestedVideoUrl === videoUrl) {
-        break;
-      }
-      videoUrl = nestedVideoUrl;
-    }
-
-    videoUrl = normalizePlayableVideoUrl(videoUrl);
+    const videoUrl = normalizePlayableVideoUrl(await resolvePlayableVideoUrl(episodeUrl));
     const autoplayUrl = videoUrl.includes("?") ? `${videoUrl}&autoplay=1&muted=0` : `${videoUrl}?autoplay=1&muted=0`;
     res.json({ videoUrl: autoplayUrl });
   } catch (error) {
