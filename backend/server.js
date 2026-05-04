@@ -405,6 +405,38 @@ const parseVideoEmbedUrl = (html) => {
   throw new Error("No playable embed URL found in episode page");
 };
 
+const sanitizeUrl = (value) => String(value || "").replace(/[<>"')\]]+$/g, "").trim();
+
+const normalizePlayableVideoUrl = (value) => {
+  const url = sanitizeUrl(value);
+  if (!url) return "";
+  const teamstodayMatch = url.match(/https?:\/\/(?:www\.)?teamstoday\.com\/?\?video=([A-Za-z0-9]+)(#[A-Za-z0-9_-]+)?/i);
+  if (teamstodayMatch?.[1]) {
+    const videoId = teamstodayMatch[1];
+    const anchor = (teamstodayMatch[2] || "").toLowerCase();
+    if (/^\d+$/.test(videoId) || anchor.includes("vimeo")) {
+      return `https://player.vimeo.com/video/${videoId}`;
+    }
+    return `https://www.dailymotion.com/embed/video/${videoId}`;
+  }
+  const vimeoId = url.match(/(?:player\.)?vimeo\.com\/(?:video\/)?(\d{6,})/i)?.[1];
+  if (vimeoId) {
+    return `https://player.vimeo.com/video/${vimeoId}`;
+  }
+  const dmId = url.match(/dailymotion\.com\/(?:embed\/video\/|video\/)([A-Za-z0-9]+)/i)?.[1];
+  if (dmId) {
+    return `https://www.dailymotion.com/embed/video/${dmId}`;
+  }
+  const ytId =
+    url.match(/youtube\.com\/embed\/([A-Za-z0-9_-]+)/i)?.[1] ||
+    url.match(/[?&]v=([A-Za-z0-9_-]+)/i)?.[1] ||
+    url.match(/youtu\.be\/([A-Za-z0-9_-]+)/i)?.[1];
+  if (ytId) {
+    return `https://www.youtube.com/embed/${ytId}`;
+  }
+  return url;
+};
+
 const extractEpisodesFromRawLinks = (html, showUrl) => {
   const showPath = new URL(showUrl).pathname.replace(/\/+$/, "");
   const linkRegex = new RegExp(`https?:\\/\\/(?:www\\.)?tamildhool\\.tech${showPath}\\/[^\\"'\\s)]+`, "gi");
@@ -548,7 +580,7 @@ app.get("/video", async (req, res) => {
     const episodeUrl = String(req.query.episodeUrl || "");
     if (!episodeUrl) throw new Error("Query parameter 'episodeUrl' is required");
     const html = await requestHtml(episodeUrl);
-    let videoUrl = parseVideoEmbedUrl(html);
+    let videoUrl = normalizePlayableVideoUrl(parseVideoEmbedUrl(html));
 
     // Some episode pages point to an intermediate tamildhool iframe page.
     // Resolve nested embeds so the client receives the final playable provider URL.
@@ -564,13 +596,14 @@ app.get("/video", async (req, res) => {
         break;
       }
       const nestedHtml = await requestHtml(videoUrl);
-      const nestedVideoUrl = parseVideoEmbedUrl(nestedHtml);
+      const nestedVideoUrl = normalizePlayableVideoUrl(parseVideoEmbedUrl(nestedHtml));
       if (!nestedVideoUrl || nestedVideoUrl === videoUrl) {
         break;
       }
       videoUrl = nestedVideoUrl;
     }
 
+    videoUrl = normalizePlayableVideoUrl(videoUrl);
     const autoplayUrl = videoUrl.includes("?") ? `${videoUrl}&autoplay=1&muted=0` : `${videoUrl}?autoplay=1&muted=0`;
     res.json({ videoUrl: autoplayUrl });
   } catch (error) {
