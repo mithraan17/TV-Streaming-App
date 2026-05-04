@@ -412,12 +412,8 @@ const normalizePlayableVideoUrl = (value) => {
   if (!url) return "";
   const teamstodayMatch = url.match(/https?:\/\/(?:www\.)?teamstoday\.com\/?\?video=([A-Za-z0-9]+)(#[A-Za-z0-9_-]+)?/i);
   if (teamstodayMatch?.[1]) {
-    const videoId = teamstodayMatch[1];
-    const anchor = (teamstodayMatch[2] || "").toLowerCase();
-    if (/^\d+$/.test(videoId) || anchor.includes("vimeo")) {
-      return `https://player.vimeo.com/video/${videoId}`;
-    }
-    return `https://www.dailymotion.com/embed/video/${videoId}`;
+    // Keep teamstoday URL as-is; forcing embed conversion can break playback.
+    return url;
   }
   const vimeoId = url.match(/(?:player\.)?vimeo\.com\/(?:video\/)?(\d{6,})/i)?.[1];
   if (vimeoId) {
@@ -448,6 +444,7 @@ const isLikelyFinalPlayableUrl = (value) => {
       host.includes("dailymotion.com") ||
       host.includes("youtube.com") ||
       host.includes("youtu.be") ||
+      host.includes("teamstoday.com") ||
       host.includes("jwplatform.com") ||
       host.includes("jwplayer.com")
     );
@@ -568,6 +565,10 @@ const collectVideoCandidateLinks = (html, basePageUrl) => {
 const resolvePlayableVideoUrl = async (episodeUrl) => {
   const episodeHtml = await requestHtml(episodeUrl);
   const sourceLinks = parseEpisodeSourceLinks(episodeHtml, episodeUrl);
+  const explicitTeamstoday = sourceLinks.find((item) => /teamstoday\.com/i.test(item.url));
+  if (explicitTeamstoday?.url) {
+    return normalizePlayableVideoUrl(explicitTeamstoday.url);
+  }
   const entryPoints = sourceLinks.length ? sourceLinks.map((item) => item.url) : [episodeUrl];
 
   for (const sourceUrl of entryPoints) {

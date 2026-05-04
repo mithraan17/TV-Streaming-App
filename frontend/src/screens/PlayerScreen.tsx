@@ -8,7 +8,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Player">;
 
 export const PlayerScreen = ({ route, navigation }: Props) => {
   const { videoUrl } = route.params;
-  const [useDirectUri, setUseDirectUri] = React.useState<boolean>(false);
+  const [useDirectUri, setUseDirectUri] = React.useState<boolean>(true);
 
   React.useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -47,8 +47,8 @@ export const PlayerScreen = ({ route, navigation }: Props) => {
         scrollEnabled={false}
         setSupportMultipleWindows={false}
         onError={() => {
-          if (!useDirectUri) {
-            setUseDirectUri(true);
+          if (useDirectUri) {
+            setUseDirectUri(false);
           }
         }}
         style={styles.webView}
