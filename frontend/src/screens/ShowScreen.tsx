@@ -76,8 +76,12 @@ export const ShowScreen = ({ route, navigation }: Props) => {
   const [selectedCategory, setSelectedCategory] = useState<Category>("serials");
   const drawerHandleRef = useRef<View | null>(null);
   const firstCardRef = useRef<View | null>(null);
+  const serialCategoryRef = useRef<View | null>(null);
+  const showsCategoryRef = useRef<View | null>(null);
   const [drawerFocusTarget, setDrawerFocusTarget] = useState<number | undefined>(undefined);
   const [firstCardFocusTarget, setFirstCardFocusTarget] = useState<number | undefined>(undefined);
+  const [serialFocusTarget, setSerialFocusTarget] = useState<number | undefined>(undefined);
+  const [showsFocusTarget, setShowsFocusTarget] = useState<number | undefined>(undefined);
 
   const isVijayProvider = selectedProvider.id === "vijay";
   const activeShows = selectedCategory === "shows" ? shows : serials;
@@ -128,8 +132,12 @@ export const ShowScreen = ({ route, navigation }: Props) => {
   useEffect(() => {
     const drawerTarget = drawerHandleRef.current ? (drawerHandleRef.current as unknown as { _nativeTag?: number })._nativeTag : undefined;
     const firstCardTarget = firstCardRef.current ? (firstCardRef.current as unknown as { _nativeTag?: number })._nativeTag : undefined;
+    const serialTarget = serialCategoryRef.current ? (serialCategoryRef.current as unknown as { _nativeTag?: number })._nativeTag : undefined;
+    const showsTarget = showsCategoryRef.current ? (showsCategoryRef.current as unknown as { _nativeTag?: number })._nativeTag : undefined;
     setDrawerFocusTarget(drawerTarget);
     setFirstCardFocusTarget(firstCardTarget);
+    setSerialFocusTarget(serialTarget);
+    setShowsFocusTarget(showsTarget);
   }, [serials, shows, selectedCategory]);
 
   useEffect(() => {
@@ -309,10 +317,18 @@ export const ShowScreen = ({ route, navigation }: Props) => {
               {VIJAY_CATEGORIES.map((category, index) => (
                 <Pressable
                   key={category.id}
+                  ref={category.id === "serials" ? serialCategoryRef : showsCategoryRef}
                   onPress={() => onCategoryPress(category.id)}
-                  onFocus={() => setSidebarOpen(true)}
+                  onFocus={() => {
+                    setSidebarOpen(true);
+                    setSelectedCategory(category.id);
+                  }}
                   hasTVPreferredFocus={index === 0}
-                  {...({ nextFocusRight: firstCardFocusTarget } as object)}
+                  {...({
+                    nextFocusRight: firstCardFocusTarget,
+                    nextFocusDown: category.id === "serials" ? showsFocusTarget : undefined,
+                    nextFocusUp: category.id === "shows" ? serialFocusTarget : undefined,
+                  } as object)}
                   style={({ focused }: TVPressableState) => [
                     styles.categoryButton,
                     selectedCategory === category.id && styles.categoryButtonActive,

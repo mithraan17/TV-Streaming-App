@@ -371,7 +371,9 @@ const parseVideoEmbedUrl = (html) => {
   const vimeoIframe = iframeSrcs.find((src) => src.includes("player.vimeo.com/video/"));
   if (vimeoIframe) return vimeoIframe;
 
-  const supportedIframe = iframeSrcs.find((src) => src.includes("dailymotion.com") || src.includes("youtube.com"));
+  const supportedIframe = iframeSrcs.find(
+    (src) => src.includes("dailymotion.com") || src.includes("youtube.com") || src.includes("tamildhool.tech"),
+  );
   if (supportedIframe) return supportedIframe;
 
   const vimeoIdMatch = html.match(/player\.vimeo\.com\/video\/(\d+)/i) || html.match(/vimeo\.com\/(\d{6,})/i);
@@ -546,7 +548,29 @@ app.get("/video", async (req, res) => {
     const episodeUrl = String(req.query.episodeUrl || "");
     if (!episodeUrl) throw new Error("Query parameter 'episodeUrl' is required");
     const html = await requestHtml(episodeUrl);
-    const videoUrl = parseVideoEmbedUrl(html);
+    let videoUrl = parseVideoEmbedUrl(html);
+
+    // Some episode pages point to an intermediate tamildhool iframe page.
+    // Resolve nested embeds so the client receives the final playable provider URL.
+    for (let depth = 0; depth < 2; depth += 1) {
+      const host = (() => {
+        try {
+          return new URL(videoUrl).hostname;
+        } catch {
+          return "";
+        }
+      })();
+      if (!host.includes("tamildhool.tech")) {
+        break;
+      }
+      const nestedHtml = await requestHtml(videoUrl);
+      const nestedVideoUrl = parseVideoEmbedUrl(nestedHtml);
+      if (!nestedVideoUrl || nestedVideoUrl === videoUrl) {
+        break;
+      }
+      videoUrl = nestedVideoUrl;
+    }
+
     const autoplayUrl = videoUrl.includes("?") ? `${videoUrl}&autoplay=1&muted=0` : `${videoUrl}?autoplay=1&muted=0`;
     res.json({ videoUrl: autoplayUrl });
   } catch (error) {
