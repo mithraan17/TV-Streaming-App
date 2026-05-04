@@ -280,6 +280,8 @@ const parseEpisodesFromShowPage = (html, showUrl, strictOrder = false) => {
     const anchor = $(element);
     const href = absoluteUrl(anchor.attr("href") || "");
     if (!isTamilDhoolUrl(href)) return;
+    if (!href.startsWith(`${baseUrl}${showPath}/`)) return;
+    if (href === showUrl || /\/page\/\d+\/?$/i.test(href)) return;
     const titleRaw =
       anchor.attr("title") || anchor.find("img").attr("alt") || anchor.find("h2,h3,h4").first().text() || anchor.text();
     const title = titleRaw.replace(/\s+/g, " ").trim();
@@ -369,7 +371,7 @@ const parseVideoEmbedUrl = (html) => {
   const vimeoIframe = iframeSrcs.find((src) => src.includes("player.vimeo.com/video/"));
   if (vimeoIframe) return vimeoIframe;
 
-  const supportedIframe = iframeSrcs.find((src) => src.includes("dailymotion.com") || src.includes("youtube.com") || src.includes("tamildhool.tech"));
+  const supportedIframe = iframeSrcs.find((src) => src.includes("dailymotion.com") || src.includes("youtube.com"));
   if (supportedIframe) return supportedIframe;
 
   const vimeoIdMatch = html.match(/player\.vimeo\.com\/video\/(\d+)/i) || html.match(/vimeo\.com\/(\d{6,})/i);
@@ -388,6 +390,14 @@ const parseVideoEmbedUrl = (html) => {
       return `https://player.vimeo.com/video/${videoId}`;
     }
     return `https://www.dailymotion.com/embed/video/${videoId}`;
+  }
+
+  const explicitEmbedLink =
+    html.match(/https?:\/\/player\.vimeo\.com\/video\/\d+[^\s"'<>)]*/i)?.[0] ||
+    html.match(/https?:\/\/www\.dailymotion\.com\/embed\/video\/[A-Za-z0-9]+[^\s"'<>)]*/i)?.[0] ||
+    html.match(/https?:\/\/www\.youtube\.com\/embed\/[A-Za-z0-9_-]+[^\s"'<>)]*/i)?.[0];
+  if (explicitEmbedLink) {
+    return explicitEmbedLink;
   }
 
   throw new Error("No playable embed URL found in episode page");

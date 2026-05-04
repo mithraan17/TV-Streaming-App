@@ -218,7 +218,7 @@ export const ShowScreen = ({ route, navigation }: Props) => {
   }, [focusedShowUrl, serials, shows]);
 
   const onProviderPress = () => {
-    setVijayExpanded((prev) => !prev);
+    setVijayExpanded(true);
   };
 
   const onCategoryPress = (category: Category) => {
@@ -319,7 +319,18 @@ export const ShowScreen = ({ route, navigation }: Props) => {
                     focused && styles.categoryButtonFocused,
                   ]}
                 >
-                  <Text style={styles.categoryLabel}>{category.label}</Text>
+                  {({ focused }: TVPressableState) => (
+                    <>
+                      <View
+                        style={[
+                          styles.categoryIndicator,
+                          selectedCategory === category.id && styles.categoryIndicatorActive,
+                          focused && styles.categoryIndicatorFocused,
+                        ]}
+                      />
+                      <Text style={styles.categoryLabel}>{category.label}</Text>
+                    </>
+                  )}
                 </Pressable>
               ))}
             </View>

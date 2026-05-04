@@ -12,6 +12,18 @@ const FIRST_BATCH_SIZE = 10;
 const TOTAL_EPISODES_CAP = 10;
 
 const parseDate = (value: string): number => {
+  const text = String(value || "").trim();
+  const dayMonthYear = text.match(/\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/);
+  if (dayMonthYear) {
+    const day = Number(dayMonthYear[1]);
+    const month = Number(dayMonthYear[2]);
+    const yearRaw = Number(dayMonthYear[3]);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    const manualDate = new Date(year, month - 1, day).getTime();
+    if (!Number.isNaN(manualDate)) {
+      return manualDate;
+    }
+  }
   const parsed = new Date(value).getTime();
   if (!Number.isNaN(parsed)) {
     return parsed;
