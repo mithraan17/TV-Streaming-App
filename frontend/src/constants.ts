@@ -27,14 +27,17 @@ const readExpoHostFromConstants = (): string => {
 };
 
 const resolveApiBaseUrl = (): string => {
+  // IMPORTANT: Update this IP if your machine's IP changes
+  const BACKEND_IP = "192.168.0.9";
+  
   const host = readExpoHostFromConstants() || readExpoHostFromSourceCode();
-  if (host) {
+  if (host && host !== "localhost" && host !== "127.0.0.1") {
     return `http://${host}:4000`;
   }
   if (Platform.OS === "android") {
-    return "http://10.0.2.2:4000";
+    return `http://${BACKEND_IP}:4000`;
   }
-  return "http://localhost:4000";
+  return `http://${BACKEND_IP}:4000`;
 };
 
 export const API_BASE_URL = resolveApiBaseUrl();

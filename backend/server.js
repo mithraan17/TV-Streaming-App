@@ -240,30 +240,49 @@ const isValidShowCandidate = (name, url, slug) => {
 };
 
 
-// Helper to fetch and fill image for a show/serial
+// Persistent image cache — each show URL is only fetched once per server lifetime
+const imageCache = new Map();
+
+// Fills item.imageUrl using the cache. Never throws — failures are silently ignored.
 const fillShowImage = async (item) => {
-  if (!item || item.imageUrl) return;
+  if (!item) return;
+  if (item.imageUrl) {
+    imageCache.set(item.url, item.imageUrl);
+    return;
+  }
+  if (imageCache.has(item.url)) {
+    item.imageUrl = imageCache.get(item.url) || "";
+    return;
+  }
   try {
     const pageHtml = await requestHtml(item.url);
     const $$ = cheerio.load(pageHtml);
-    const metaImage = $$('meta[property="og:image"]').attr('content') || $$('meta[name="og:image"]').attr('content') || $$('meta[name="twitter:image"]').attr('content');
-    const firstImg = $$('img.wp-post-image').attr('src') || $$('article img').first().attr('src') || $$('img').first().attr('src') || $$('img').first().attr('data-src');
-    let found = metaImage || firstImg || '';
+    const metaImage =
+      $$('meta[property="og:image"]').attr("content") ||
+      $$('meta[name="og:image"]').attr("content") ||
+      $$('meta[name="twitter:image"]').attr("content");
+    const firstImg =
+      $$("img.wp-post-image").attr("src") ||
+      $$("article img").first().attr("src") ||
+      $$("img").first().attr("src") ||
+      $$("img").first().attr("data-src");
+    let found = metaImage || firstImg || "";
     if (!found) {
-      const mdMatch = (pageHtml || '').match(/!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/);
+      const mdMatch = (pageHtml || "").match(/!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/);
       if (mdMatch && mdMatch[1]) found = mdMatch[1];
     }
-    if (found) item.imageUrl = absoluteUrl(found);
-  } catch (e) {
-    // ignore fetch failures for images
+    const resolved = found ? absoluteUrl(found) : "";
+    imageCache.set(item.url, resolved);
+    if (resolved) item.imageUrl = resolved;
+  } catch (_e) {
+    imageCache.set(item.url, ""); // don't retry next time
   }
 };
 
-// Returns the hardcoded shows/serials, with images filled
+// Returns the hardcoded shows/serials. Image fetches are best-effort and never cause a throw.
 const getHardcodedShows = async () => {
-  // Deep clone to avoid mutation
   const shows = HARDCODED_SHOWS.map((s) => ({ ...s }));
-  await Promise.all(shows.map(fillShowImage));
+  await Promise.allSettled(shows.map(fillShowImage));
   const serials = shows.filter((s) => s.type === "serial");
   const tvshows = shows.filter((s) => s.type === "show");
   return { serials, shows: tvshows };
@@ -363,28 +382,59 @@ const parseEpisodesFromShowPage = (html, showUrl, strictOrder = false) => {
 const parseVideoEmbedUrl = (html) => {
   const $ = cheerio.load(html);
   const iframeSrcs = [];
+  
   $("iframe").each((_, element) => {
     const src = absoluteUrl($(element).attr("src") || "");
-    if (src) iframeSrcs.push(src);
+    if (src) {
+      iframeSrcs.push(src);
+    }
   });
 
+  // Prioritize Vimeo (most reliable)
   const vimeoIframe = iframeSrcs.find((src) => src.includes("player.vimeo.com/video/"));
-  if (vimeoIframe) return vimeoIframe;
+  if (vimeoIframe) {
+    return vimeoIframe;
+  }
 
+  // Try other supported platforms
   const supportedIframe = iframeSrcs.find(
-    (src) => src.includes("dailymotion.com") || src.includes("youtube.com") || src.includes("tamildhool.tech"),
+    (src) =>
+      src.includes("dailymotion.com") ||
+      src.includes("youtube.com") ||
+      src.includes("youtu.be") ||
+      src.includes("tamildhool.tech") ||
+      src.includes("teamstoday.com") ||
+      src.includes("jwplatform.com") ||
+      src.includes("jwplayer.com"),
   );
-  if (supportedIframe) return supportedIframe;
+  if (supportedIframe) {
+    return supportedIframe;
+  }
 
-  const vimeoIdMatch = html.match(/player\.vimeo\.com\/video\/(\d+)/i) || html.match(/vimeo\.com\/(\d{6,})/i);
-  if (vimeoIdMatch?.[1]) return `https://player.vimeo.com/video/${vimeoIdMatch[1]}`;
+  // Fallback: search for embedded video IDs in HTML
+  const vimeoIdMatch =
+    html.match(/player\.vimeo\.com\/video\/(\d+)/i) ||
+    html.match(/vimeo\.com\/(\d{6,})/i);
+  if (vimeoIdMatch?.[1]) {
+    return `https://player.vimeo.com/video/${vimeoIdMatch[1]}`;
+  }
 
-  const dailymotionMatch = html.match(/dailymotion\.com\/embed\/video\/([A-Za-z0-9]+)/i);
-  if (dailymotionMatch?.[1]) return `https://www.dailymotion.com/embed/video/${dailymotionMatch[1]}`;
+  const dailymotionMatch = html.match(
+    /dailymotion\.com\/embed\/video\/([A-Za-z0-9]+)/i
+  );
+  if (dailymotionMatch?.[1]) {
+    return `https://www.dailymotion.com/embed/video/${dailymotionMatch[1]}`;
+  }
 
-  const teamstodayLinks = Array.from(html.matchAll(/https?:\/\/(?:www\.)?teamstoday\.com\/?\?video=([A-Za-z0-9]+)(#[A-Za-z0-9_-]+)?/gi));
+  const teamstodayLinks = Array.from(
+    html.matchAll(
+      /https?:\/\/(?:www\.)?teamstoday\.com\/\?video=([A-Za-z0-9]+)(#[A-Za-z0-9_-]+)?/gi
+    )
+  );
   if (teamstodayLinks.length) {
-    const teamstodayVimeo = teamstodayLinks.find((match) => (match[2] || "").toLowerCase().includes("vimeo"));
+    const teamstodayVimeo = teamstodayLinks.find((match) =>
+      (match[2] || "").toLowerCase().includes("vimeo")
+    );
     const selectedTeamstoday = teamstodayVimeo || teamstodayLinks[0];
     const videoId = selectedTeamstoday?.[1] || "";
     const anchor = (selectedTeamstoday?.[2] || "").toLowerCase();
@@ -392,14 +442,6 @@ const parseVideoEmbedUrl = (html) => {
       return `https://player.vimeo.com/video/${videoId}`;
     }
     return `https://www.dailymotion.com/embed/video/${videoId}`;
-  }
-
-  const explicitEmbedLink =
-    html.match(/https?:\/\/player\.vimeo\.com\/video\/\d+[^\s"'<>)]*/i)?.[0] ||
-    html.match(/https?:\/\/www\.dailymotion\.com\/embed\/video\/[A-Za-z0-9]+[^\s"'<>)]*/i)?.[0] ||
-    html.match(/https?:\/\/www\.youtube\.com\/embed\/[A-Za-z0-9_-]+[^\s"'<>)]*/i)?.[0];
-  if (explicitEmbedLink) {
-    return explicitEmbedLink;
   }
 
   throw new Error("No playable embed URL found in episode page");
@@ -766,13 +808,48 @@ app.get("/episodes", async (req, res) => {
 app.get("/video", async (req, res) => {
   try {
     const episodeUrl = String(req.query.episodeUrl || "");
-    if (!episodeUrl) throw new Error("Query parameter 'episodeUrl' is required");
-    const videoUrl = normalizePlayableVideoUrl(await resolvePlayableVideoUrl(episodeUrl));
-    const autoplayUrl = videoUrl.includes("?") ? `${videoUrl}&autoplay=1&muted=0` : `${videoUrl}?autoplay=1&muted=0`;
+    if (!episodeUrl) {
+      throw new Error("Query parameter 'episodeUrl' is required");
+    }
+    // Use the full multi-hop resolver so teamstoday/Vimeo/Dailymotion redirects are followed
+    const videoUrl = await resolvePlayableVideoUrl(episodeUrl);
+    if (!videoUrl) {
+      throw new Error("No playable video source could be resolved from episode page");
+    }
+    const autoplayUrl = videoUrl.includes("?")
+      ? `${videoUrl}&autoplay=1&muted=0`
+      : `${videoUrl}?autoplay=1&muted=0`;
     res.json({ videoUrl: autoplayUrl });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     res.status(500).json({ error: `Failed to load video URL: ${message}` });
+  }
+});
+
+app.get("/embed", (req, res) => {
+  try {
+    const src = String(req.query.src || "");
+    if (!src) {
+      return res.status(400).send("Missing src parameter");
+    }
+    const html = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Player</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #000; height: 100%; width: 100%; overflow: hidden; }
+      iframe { position: fixed; top: 0; left: 0; width: 100%; height: 100%; border: none; }
+    </style>
+  </head>
+  <body>
+    <iframe src="${src}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>
+  </body>
+</html>`;
+    res.type("text/html").send(html);
+  } catch (error) {
+    res.status(500).send("Embed error");
   }
 });
 
