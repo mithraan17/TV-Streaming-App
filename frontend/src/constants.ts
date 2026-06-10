@@ -27,8 +27,19 @@ const readExpoHostFromConstants = (): string => {
 };
 
 const resolveApiBaseUrl = (): string => {
-  // IMPORTANT: Update this IP if your machine's IP changes
+  // Railway backend URL - Update this with your Railway deployment URL
+  // Format: https://your-project-name.up.railway.app
+  // After deploying to Railway, get the public URL and paste it here
+  const RAILWAY_BACKEND_URL = "https://your-railway-url.up.railway.app";
+  
+  // For local development only (keep for testing)
   const BACKEND_IP = "192.168.0.9";
+  
+  // Use Railway URL in production, fall back to local IP in development
+  // Comment out the RAILWAY_BACKEND_URL line to use local IP discovery
+  if (RAILWAY_BACKEND_URL && !RAILWAY_BACKEND_URL.includes("your-railway")) {
+    return RAILWAY_BACKEND_URL;
+  }
   
   const host = readExpoHostFromConstants() || readExpoHostFromSourceCode();
   if (host && host !== "localhost" && host !== "127.0.0.1") {
