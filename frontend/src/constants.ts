@@ -30,7 +30,7 @@ const resolveApiBaseUrl = (): string => {
   // Railway backend URL - Update this with your Railway deployment URL
   // Format: https://your-project-name.up.railway.app
   // After deploying to Railway, get the public URL and paste it here
-  const RAILWAY_BACKEND_URL = "https://your-railway-url.up.railway.app";
+  const RAILWAY_BACKEND_URL = "https://tv-streaming-app-production.up.railway.app";
   
   // For local development only (keep for testing)
   const BACKEND_IP = "192.168.0.9";
